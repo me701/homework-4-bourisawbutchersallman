@@ -1,3 +1,4 @@
+[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/lm-7f901)
 # README 
 
 Sometimes, I leave my beverage package in the hot car, so I end up with aluminum-clad cylinders of mostly water with, what I suspect, is a pretty uniform temperature profile that peaks at $T_{hot car} = 95~{}^{\text{o}$F.  When I found I had just done it again most recently, I naturally wondered how I might remedy the solution in an optimal matter, right after I, surely suboptimally, spun the can in an icebath until I got bored (say, 30 seconds), and then repeated the process twice more (with 5-minute breaks after each spin sesh).  
