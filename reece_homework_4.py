@@ -5,17 +5,18 @@ from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 from scipy import linalg
 from scipy.sparse import lil_matrix, csr_matrix, diags
+from matplotlib.animation import FuncAnimation
 
 # --- Physical parameters and setup ---
 P_out = 0.20265  # MPa, outlet pressure
 P_in = P_out*2   # MPa, inlet pressure
-T_out = T_bot = 273.15  # K, bottom/outlet temperature
-T_top = 363.15  # K, top/inlet temperature
+T_out = T_bot = 273.15  # K, bottom temperature
+T_top = 363.15  # K, top temperature
 
 # --- Mesh and geometry parameters ---
-N_water = 100     # number of radial nodes in water region
-N_wall = 10       # number of radial nodes in wall region
-N_vert = 170      # number of axial nodes in water region
+N_water = 120     # number of radial nodes in water region
+N_wall = 12       # number of radial nodes in wall region
+N_vert = 200      # number of axial nodes in water region
 
 z_interface_up = 0.12 - 0.0002  # m, top of water region
 z_interface_down = 0.0002       # m, bottom of water region
@@ -50,11 +51,24 @@ z_water_nodes = np.linspace(z_wall_bottom + delta_z_water/2, z_wall_top - delta_
 total_nodes = np.concatenate((r_water, r_wall))  # radial coordinates [m]
 z_nodes = np.concatenate([z_wall_bottom_nodes, z_water_nodes, z_wall_top_nodes])  # axial [m]
 
-node_len = len(total_nodes)
-z_len = len(z_nodes)
+N_r = len(total_nodes)
+N_z = len(z_nodes)
+
+# faces and cell thicknesses
+r_faces = np.zeros(N_r + 1)
+r_faces[1:-1] = 0.5 * (total_nodes[:-1] + total_nodes[1:])
+r_faces[0] = 0.0
+r_faces[-1] = total_nodes[-1] + 0.5 * (total_nodes[-1] - total_nodes[-2])
+dr_cells = np.diff(r_faces)               # Δr for each radial cell (length N_r)
+
+z_faces = np.zeros(N_z + 1)
+z_faces[1:-1] = 0.5 * (z_nodes[:-1] + z_nodes[1:])
+z_faces[0] = z_nodes[0] - 0.5 * (z_nodes[1] - z_nodes[0])
+z_faces[-1] = z_nodes[-1] + 0.5 * (z_nodes[-1] - z_nodes[-2])
+dz_cells = np.diff(z_faces)               # Δz for each axial cell (length N_z)
 
 # --- Initial conditions and constants ---
-orig_T = [35+273.15]*(node_len*z_len)  # K, initial uniform temperature
+orig_T = [35+273.15]*(N_r*N_z)  # K, initial uniform temperature
 target_T = 10+273.15  # K, target average water temperature
 h_out = h_bot = 956.25614  # W/m²·K, convection at outer/bottom surfaces
 h_top = 5.13               # W/m²·K, convection at top
@@ -97,13 +111,14 @@ def water_props(T):
         k_vals.append(w.k)
     rho_vals, cp_vals, k_vals = map(np.array, (rho_vals, cp_vals, k_vals))
     if rho_vals.size == 1:
-        return float(rho_vals), float(cp_vals), float(k_vals)
+        return float(rho_vals[0]), float(cp_vals[0]), float(k_vals[0])
     return rho_vals, cp_vals, k_vals
 
 def build_A_matrix_volume_safe_nonuniform(r, z, k_flat, denom_tol=1e-12):
     """
     Build finite-volume matrix A and source term b for transient 2D (r,z) conduction.
-    Axisymmetric form with non-uniform mesh.
+    Axisymmetric form with non-uniform mesh. Expects radial fastest flattening
+    (i + j*N_r)
 
     Inputs:
         r : radial node array [m]
@@ -124,21 +139,6 @@ def build_A_matrix_volume_safe_nonuniform(r, z, k_flat, denom_tol=1e-12):
     #   - outer radius: convective to ambient (h_out, T_out)
     #   - top/bottom: convective to T_top/T_bot
     #   - symmetry on r=0 handled by FV formulation
-    N_r = len(r)
-    N_z = len(z)
-
-    # faces and cell thicknesses
-    r_faces = np.zeros(N_r + 1)
-    r_faces[1:-1] = 0.5 * (r[:-1] + r[1:])
-    r_faces[0] = 0.0
-    r_faces[-1] = r[-1] + 0.5 * (r[-1] - r[-2])
-    dr_cells = np.diff(r_faces)               # Δr for each radial cell (length N_r)
-
-    z_faces = np.zeros(N_z + 1)
-    z_faces[1:-1] = 0.5 * (z[:-1] + z[1:])
-    z_faces[0] = z[0] - 0.5 * (z[1] - z[0])
-    z_faces[-1] = z[-1] + 0.5 * (z[-1] - z[-2])
-    dz_cells = np.diff(z_faces)               # Δz for each axial cell (length N_z)
 
     A = lil_matrix((N_r * N_z, N_r * N_z), dtype=float)
     b = np.zeros(N_r * N_z, dtype=float)
@@ -246,8 +246,6 @@ def composite_properties(T_flat, r_nodes, z_nodes, tol=1e-12):
     Returns:
         rho, cp, k : flattened arrays [kg/m³], [J/kg·K], [W/m·K]
     """
-    N_r = len(r_nodes)
-    N_z = len(z_nodes)
     rho = np.zeros_like(T_flat)
     cp  = np.zeros_like(T_flat)
     k   = np.zeros_like(T_flat)
@@ -271,7 +269,6 @@ def composite_properties(T_flat, r_nodes, z_nodes, tol=1e-12):
                     rho_w, cp_w, k_w = water_props(Ti)
                     rho_al, cp_al, k_al = aluminum_properties(Ti)
                     frac = (r_interface - (r - tol)) / (2*tol)
-                    frac = np.clip(frac, 0.0, 1.0)
                     rho_i = frac*rho_w + (1-frac)*rho_al
                     cp_i  = frac*cp_w  + (1-frac)*cp_al
                     k_i   = frac*k_w   + (1-frac)*k_al
@@ -286,16 +283,12 @@ def composite_properties(T_flat, r_nodes, z_nodes, tol=1e-12):
 rho_0, cp_0, k_0 = composite_properties(orig_T, total_nodes, z_nodes)
 
 # --- Time derivative function for ODE solver ---
-last_t_print = 0
 def dTdt_vol(t, T):
     """
     Returns dT/dt for all control volumes.
     Called by solve_ivp during transient integration.
     """
-    global last_t_print
-    if t - last_t_print >= 100:
-        print(f"Time = {t:.1f} s")
-        last_t_print = t
+    print(t)
     if t == 0:
         # Use initial properties
         A, b = build_A_matrix_volume_safe_nonuniform(total_nodes, z_nodes, k_0)
@@ -318,18 +311,18 @@ def jac_A_div_rhocp(t, T):
     J = diags(inv_rhocp) @ A
     return J
 
-
+sol_t = np.linspace(0, 3000, 3001)
 # --- Transient solver setup ---
 sol = solve_ivp(
     fun=dTdt_vol,
-    t_span=(0, 1200.0),   # s, simulation time span
+    t_span=(0, 3000.0),   # s, simulation time span
     y0=orig_T,             # K, initial temperature field
     method='BDF',          # stiff implicit method
     jac=jac_A_div_rhocp,
-    rtol=1e-4,
-    atol=1e-6,
-    max_step=10,
-    first_step=0.02
+    rtol=1e-3,
+    atol=1e-4,
+    first_step=0.1,
+    t_eval=sol_t
 )
 
 # --- Identify water region indices ---
@@ -349,7 +342,7 @@ for jdx, j in enumerate(z_nodes):
 T_water = np.zeros((N_water, N_vert, sol.t.size))
 for i in range(0, index_r+1):
     for j in range(index_j_b+1, index_j_t+1):
-        T_water[i, j-(index_j_b+1)] = sol.y.reshape(node_len, z_len, -1, order='F')[i, j, :]
+        T_water[i, j-(index_j_b+1)] = sol.y.reshape(N_r, N_z, -1, order='F')[i, j, :]
 
 # --- Compute mean water temperature over time ---
 T_mean = np.zeros((sol.t.size))
@@ -360,8 +353,42 @@ for t in range(sol.t.size):
 t_target = 0
 index_t = 0
 for idt, t in zip(sol.t, T_mean):
-    if t > target_T:
+    if t < target_T:
         t_target = idt
-        index_t += 1
+        break
+    index_t += 1
 print(t_target, T_mean[index_t])
-print(T_mean[index_t-1])
+
+i_center = np.argmin(np.abs(total_nodes))
+j_center = len(z_nodes) // 2
+
+T_all = sol.y  # shape (N_r*N_z, N_t)
+T_all = T_all.reshape(N_r, N_z, -1, order='F')
+
+vmin, vmax = T_all.min(), T_all.max()
+
+R, Z = np.meshgrid(z_nodes, total_nodes)  # careful: your orientation is [r,z]
+fig, ax = plt.subplots(figsize=(4,8))
+pcm = ax.pcolormesh(Z, R, T_all[:, :, 0], shading='auto', cmap='inferno', vmin=vmin, vmax=vmax)
+ax.set_xlabel('r [m]')
+ax.set_ylabel('z [m]')
+cbar = fig.colorbar(pcm)
+cbar.set_label('Temperature [K]')
+
+text = ax.text(0.02, 0.95, '', color='white', fontsize=10, transform=ax.transAxes)
+text_1 = ax.text(0.02, 0.05, '', color='white', fontsize=10, transform=ax.transAxes)
+text_2 = ax.text(0.02, 0.0, '', color='white', fontsize=10, transform=ax.transAxes)
+
+def update(frame):
+    pcm.set_array(T_all[:, :, frame])
+    ax.set_title(f'Time = {sol.t[frame]:.1f} s')
+    T_center = T_all[i_center, j_center, frame]
+    text.set_text(f"t = {sol.t[frame]:.1f} s\nT_center = {T_center:.2f} K")
+    text_1.set_text(f't_avg = {T_mean[frame]:.1f} (water)')
+    #text_2.set_text(f't_avg = {T_mean_vol[frame]:.1f} volume weighted (water)')
+    return [pcm, text, text_1]
+
+skip = 5  # only every 5th frame
+ani = FuncAnimation(fig, update, frames=range(0, T_all.shape[2], skip), interval=50, blit=True)
+ani.save('temperature_evolution.gif', writer='pillow', fps=60)
+plt.close(fig)
