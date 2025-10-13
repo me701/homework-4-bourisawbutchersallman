@@ -279,9 +279,6 @@ def composite_properties(T_flat, r_nodes, z_nodes, tol=1e-12):
 
     return rho, cp, k
 
-# --- Compute initial properties ---
-rho_0, cp_0, k_0 = composite_properties(orig_T, total_nodes, z_nodes)
-
 # --- Time derivative function for ODE solver ---
 def dTdt_vol(t, T):
     """
@@ -311,84 +308,80 @@ def jac_A_div_rhocp(t, T):
     J = diags(inv_rhocp) @ A
     return J
 
-sol_t = np.linspace(0, 3000, 3001)
-# --- Transient solver setup ---
-sol = solve_ivp(
-    fun=dTdt_vol,
-    t_span=(0, 3000.0),   # s, simulation time span
-    y0=orig_T,             # K, initial temperature field
-    method='BDF',          # stiff implicit method
-    jac=jac_A_div_rhocp,
-    rtol=1e-3,
-    atol=1e-4,
-    first_step=0.1,
-    t_eval=sol_t
-)
+def main():
+    rho_0, cp_0, k_0 = composite_properties(orig_T, total_nodes, z_nodes)
 
-# --- Identify water region indices ---
-index_r = 0
-for idx, i in enumerate(total_nodes):
-    if i < r_interface:
-        index_r = idx
+    # Solve transient heat equation
+    sol_t = np.linspace(0, 3000, 3001)
+    sol = solve_ivp(
+        fun=dTdt_vol,
+        t_span=(0, 3000.0),
+        y0=orig_T,
+        method='BDF',
+        jac=jac_A_div_rhocp,
+        rtol=1e-3,
+        atol=1e-4,
+        first_step=0.1,
+        t_eval=sol_t
+    )
 
-index_j_t = index_j_b = 0
-for jdx, j in enumerate(z_nodes):
-    if j < z_interface_down:
-        index_j_b = jdx
-    if j < z_interface_up:
-        index_j_t = jdx
+    # Extract water region temperatures
+    index_r = 0
+    for idx, i in enumerate(total_nodes):
+        if i < r_interface:
+            index_r = idx
 
-# --- Extract temperature field in water region only ---
-T_water = np.zeros((N_water, N_vert, sol.t.size))
-for i in range(0, index_r+1):
-    for j in range(index_j_b+1, index_j_t+1):
-        T_water[i, j-(index_j_b+1)] = sol.y.reshape(N_r, N_z, -1, order='F')[i, j, :]
+    index_j_t = index_j_b = 0
+    for jdx, j in enumerate(z_nodes):
+        if j < z_interface_down:
+            index_j_b = jdx
+        if j < z_interface_up:
+            index_j_t = jdx
 
-# --- Compute mean water temperature over time ---
-T_mean = np.zeros((sol.t.size))
-for t in range(sol.t.size):
-    T_mean[t] = np.mean(T_water[:, :, t])
+    T_water = np.zeros((N_water, N_vert, sol.t.size))
+    for i in range(0, index_r + 1):
+        for j in range(index_j_b + 1, index_j_t + 1):
+            T_water[i, j - (index_j_b + 1)] = sol.y.reshape(N_r, N_z, -1, order='F')[i, j, :]
 
-# --- Find time when average water temperature exceeds target ---
-t_target = 0
-index_t = 0
-for idt, t in zip(sol.t, T_mean):
-    if t < target_T:
-        t_target = idt
-        break
-    index_t += 1
-print(t_target, T_mean[index_t])
+    # Mean temperature
+    T_mean = np.mean(T_water, axis=(0, 1))
 
-i_center = np.argmin(np.abs(total_nodes))
-j_center = len(z_nodes) // 2
+    # Find time when target temperature reached
+    target_T = 10 + 273.15
+    below = np.where(T_mean < target_T)[0]
+    if len(below):
+        t_target = sol.t[below[0]]
+        print(f"Target reached at t = {t_target:.2f} s, T_mean = {T_mean[below[0]]:.2f} K")
 
-T_all = sol.y  # shape (N_r*N_z, N_t)
-T_all = T_all.reshape(N_r, N_z, -1, order='F')
+    # Visualization
+    i_center = np.argmin(np.abs(total_nodes))
+    j_center = len(z_nodes) // 2
 
-vmin, vmax = T_all.min(), T_all.max()
+    T_all = sol.y.reshape(N_r, N_z, -1, order='F')
+    vmin, vmax = T_all.min(), T_all.max()
 
-R, Z = np.meshgrid(z_nodes, total_nodes)  # careful: your orientation is [r,z]
-fig, ax = plt.subplots(figsize=(4,8))
-pcm = ax.pcolormesh(Z, R, T_all[:, :, 0], shading='auto', cmap='inferno', vmin=vmin, vmax=vmax)
-ax.set_xlabel('r [m]')
-ax.set_ylabel('z [m]')
-cbar = fig.colorbar(pcm)
-cbar.set_label('Temperature [K]')
+    R, Z = np.meshgrid(z_nodes, total_nodes)
+    fig, ax = plt.subplots(figsize=(4, 8))
+    pcm = ax.pcolormesh(Z, R, T_all[:, :, 0], shading='auto', cmap='inferno', vmin=vmin, vmax=vmax)
+    ax.set_xlabel('r [m]')
+    ax.set_ylabel('z [m]')
+    cbar = fig.colorbar(pcm)
+    cbar.set_label('Temperature [K]')
 
-text = ax.text(0.02, 0.95, '', color='white', fontsize=10, transform=ax.transAxes)
-text_1 = ax.text(0.02, 0.05, '', color='white', fontsize=10, transform=ax.transAxes)
-text_2 = ax.text(0.02, 0.0, '', color='white', fontsize=10, transform=ax.transAxes)
+    text = ax.text(0.02, 0.95, '', color='white', fontsize=10, transform=ax.transAxes)
+    text_1 = ax.text(0.02, 0.05, '', color='white', fontsize=10, transform=ax.transAxes)
 
-def update(frame):
-    pcm.set_array(T_all[:, :, frame])
-    ax.set_title(f'Time = {sol.t[frame]:.1f} s')
-    T_center = T_all[i_center, j_center, frame]
-    text.set_text(f"t = {sol.t[frame]:.1f} s\nT_center = {T_center:.2f} K")
-    text_1.set_text(f't_avg = {T_mean[frame]:.1f} (water)')
-    #text_2.set_text(f't_avg = {T_mean_vol[frame]:.1f} volume weighted (water)')
-    return [pcm, text, text_1]
+    def update(frame):
+        pcm.set_array(T_all[:, :, frame].ravel())  # flatten for pcolormesh
+        ax.set_title(f'Time = {sol.t[frame]:.1f} s')
+        text.set_text(f"T_center = {T_all[i_center, j_center, frame]:.2f} K")
+        text_1.set_text(f"T_mean = {T_mean[frame]:.1f} K")
+        return [pcm, text, text_1]
 
-skip = 5  # only every 5th frame
-ani = FuncAnimation(fig, update, frames=range(0, T_all.shape[2], skip), interval=50, blit=True)
-ani.save('temperature_evolution.gif', writer='pillow', fps=60)
-plt.close(fig)
+    skip = 5
+    ani = FuncAnimation(fig, update, frames=range(0, T_all.shape[2], skip), interval=50, blit=True)
+    ani.save('temperature_evolution.gif', writer='pillow', fps=60)
+    plt.close(fig)
+
+if __name__ == "__main__":
+    main()
