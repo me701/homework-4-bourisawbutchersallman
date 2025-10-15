@@ -20,3 +20,4 @@ Your Tasks:
 
 Deliverable: self contained Python(?) solution with adequate commenting (via docstrings) and testing (via `unittest`).
 
+FINAL ANSWER: Time required for average fluid temperature to fall below 283.15 K (10 C) was found to be 1149 seconds (19 minutes and 9 seconds) ± 300 seconds (5 minutes). Note that this error is 2 sigma (95 C.I.). The only assumption made here is that there is no water mixing inside the can. Which gives by far the largest error out of anything else.
