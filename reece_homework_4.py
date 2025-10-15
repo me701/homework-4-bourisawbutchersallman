@@ -11,7 +11,7 @@ from matplotlib.animation import FuncAnimation
 P_out = 0.20265  # MPa, outlet pressure
 P_in = P_out*2   # MPa, inlet pressure
 T_out = T_bot = 273.15  # K, bottom temperature
-T_top = 363.15  # K, top temperature
+T_top = 308.15  # K, top temperature
 
 # --- Mesh and geometry parameters ---
 N_water = 120     # number of radial nodes in water region
@@ -25,50 +25,60 @@ z_wall_bottom = 0    # m, bottom of wall
 z_wall_top    = 0.12 # m, top of wall
 
 r_interface = 0.03 - 0.0002  # m, radius separating water/wall
-delta_r = (r_interface) / N_water
-delta_w = (0.03 - r_interface) / N_wall
-delta_z_water = (z_interface_up - z_interface_down) / N_vert
 
-# --- Axial wall mesh nodes (bottom and top) ---
-delta_z_wall_bottom = z_interface_down / N_wall
-z_wall_bottom_nodes = np.linspace(delta_z_wall_bottom/2,
-                                  z_interface_down - delta_z_wall_bottom/2,
-                                  N_wall)
+def node_making(r_num, z_num, wall_num):
+    delta_r = (r_interface) / r_num
+    delta_w = (0.03 - r_interface) / wall_num
+    delta_z_water = (z_interface_up - z_interface_down) / z_num
 
-delta_z_wall_top = z_interface_down / N_wall
-z_wall_top_nodes = np.linspace(z_interface_up+delta_z_wall_top/2,
-                               z_wall_top - delta_z_wall_top/2,
-                               N_wall)
+    # --- Axial wall mesh nodes (bottom and top) ---
+    delta_z_wall_bottom = z_interface_down / wall_num
+    z_wall_bottom_nodes = np.linspace(delta_z_wall_bottom/2,
+                                    z_interface_down - delta_z_wall_bottom/2,
+                                    wall_num)
 
-# --- Radial mesh for water and wall ---
-r_water = np.linspace(delta_r/2, r_interface - delta_r/2, N_water)  # m
-r_wall = np.linspace(r_interface + delta_w/2, 0.03 - delta_w/2, N_wall)  # m
+    delta_z_wall_top = z_interface_down / wall_num
+    z_wall_top_nodes = np.linspace(z_interface_up+delta_z_wall_top/2,
+                                z_wall_top - delta_z_wall_top/2,
+                                wall_num)
 
-# --- Axial nodes for water region ---
-z_water_nodes = np.linspace(z_wall_bottom + delta_z_water/2, z_wall_top - delta_z_water/2, N_vert)
+    # --- Radial mesh for water and wall ---
+    r_water = np.linspace(delta_r/2, r_interface - delta_r/2, r_num)  # m
+    r_wall = np.linspace(r_interface + delta_w/2, 0.03 - delta_w/2, wall_num)  # m
 
-# --- Combine into total meshes ---
-total_nodes = np.concatenate((r_water, r_wall))  # radial coordinates [m]
-z_nodes = np.concatenate([z_wall_bottom_nodes, z_water_nodes, z_wall_top_nodes])  # axial [m]
+    # --- Axial nodes for water region ---
+    z_water_nodes = np.linspace(z_wall_bottom + delta_z_water/2, z_wall_top - delta_z_water/2, z_num)
 
-N_r = len(total_nodes)
-N_z = len(z_nodes)
+    # --- Combine into total meshes ---
+    total_nodes = np.concatenate((r_water, r_wall))  # radial coordinates [m]
+    z_nodes = np.concatenate([z_wall_bottom_nodes, z_water_nodes, z_wall_top_nodes])  # axial [m]
+    return total_nodes, z_nodes
 
-# faces and cell thicknesses
-r_faces = np.zeros(N_r + 1)
-r_faces[1:-1] = 0.5 * (total_nodes[:-1] + total_nodes[1:])
-r_faces[0] = 0.0
-r_faces[-1] = total_nodes[-1] + 0.5 * (total_nodes[-1] - total_nodes[-2])
-dr_cells = np.diff(r_faces)               # Δr for each radial cell (length N_r)
+total_nodes, z_nodes = node_making(N_water, N_vert, N_wall)
 
-z_faces = np.zeros(N_z + 1)
-z_faces[1:-1] = 0.5 * (z_nodes[:-1] + z_nodes[1:])
-z_faces[0] = z_nodes[0] - 0.5 * (z_nodes[1] - z_nodes[0])
-z_faces[-1] = z_nodes[-1] + 0.5 * (z_nodes[-1] - z_nodes[-2])
-dz_cells = np.diff(z_faces)               # Δz for each axial cell (length N_z)
+def face_making(r,z):
 
+    N_r = len(r)
+    N_z = len(z)
+
+    # faces and cell thicknesses
+    r_faces = np.zeros(N_r + 1)
+    r_faces[1:-1] = 0.5 * (r[:-1] + r[1:])
+    r_faces[0] = 0.0
+    r_faces[-1] = r[-1] + 0.5 * (r[-1] - r[-2])
+    dr_cells = np.diff(r_faces)               # Δr for each radial cell (length N_r)
+
+    z_faces = np.zeros(N_z + 1)
+    z_faces[1:-1] = 0.5 * (z[:-1] + z[1:])
+    z_faces[0] = z[0] - 0.5 * (z[1] - z[0])
+    z_faces[-1] = z[-1] + 0.5 * (z[-1] - z[-2])
+    dz_cells = np.diff(z_faces)               # Δz for each axial cell (length N_z)
+
+    return r_faces, z_faces, dr_cells, dz_cells
+
+r_faces, z_faces, dr_cells, dz_cells = face_making(total_nodes, z_nodes)
 # --- Initial conditions and constants ---
-orig_T = [35+273.15]*(N_r*N_z)  # K, initial uniform temperature
+orig_T = [35+273.15]*(len(total_nodes)*len(z_nodes))  # K, initial uniform temperature
 target_T = 10+273.15  # K, target average water temperature
 h_out = h_bot = 956.25614  # W/m²·K, convection at outer/bottom surfaces
 h_top = 5.13               # W/m²·K, convection at top
@@ -140,6 +150,10 @@ def build_A_matrix_volume_safe_nonuniform(r, z, k_flat, denom_tol=1e-12):
     #   - top/bottom: convective to T_top/T_bot
     #   - symmetry on r=0 handled by FV formulation
 
+    r_facesl, z_facesl, dr_cellsl, dz_cellsl = face_making(r, z)
+    N_r = len(r)
+    N_z = len(z)
+
     A = lil_matrix((N_r * N_z, N_r * N_z), dtype=float)
     b = np.zeros(N_r * N_z, dtype=float)
 
@@ -152,13 +166,13 @@ def build_A_matrix_volume_safe_nonuniform(r, z, k_flat, denom_tol=1e-12):
         return (2.0 * a * b / (a + b)) if (a > 0.0 and b > 0.0) else 0.0
 
     for j in range(N_z):
-        dz_cell = dz_cells[j]
+        dz_cell = dz_cellsl[j]
         for i in range(N_r):
             p = idx(i, j)
 
             # face radii
-            r_im = r_faces[i]       # r_{i-1/2}
-            r_ip = r_faces[i + 1]   # r_{i+1/2}
+            r_im = r_facesl[i]       # r_{i-1/2}
+            r_ip = r_facesl[i + 1]   # r_{i+1/2}
             denom_r = (r_ip**2 - r_im**2)
             if abs(denom_r) < denom_tol:
                 # fallback small-radius regularization
@@ -212,10 +226,10 @@ def build_A_matrix_volume_safe_nonuniform(r, z, k_flat, denom_tol=1e-12):
             # Outer radial convection (i == N_r-1)
             if i == N_r - 1:
                 # face radius used for outer face (r_{i+1/2})
-                r_face = r_faces[i + 1]
-                denom_face = r_face**2 - r_faces[i]**2
+                r_face = r_facesl[i + 1]
+                denom_face = r_face**2 - r_facesl[i]**2
                 if abs(denom_face) < denom_tol:
-                    denom_face = max(denom_face, 0.5 * r_face * dr_cells[i])
+                    denom_face = max(denom_face, 0.5 * r_face * dr_cellsl[i])
                 G_conv_r = 2.0 * h_out * r_face / denom_face
                 A[p, p] -= G_conv_r
                 b[p] += G_conv_r * T_out
@@ -249,10 +263,11 @@ def composite_properties(T_flat, r_nodes, z_nodes, tol=1e-12):
     rho = np.zeros_like(T_flat)
     cp  = np.zeros_like(T_flat)
     k   = np.zeros_like(T_flat)
+    N_r_mat = len(r_nodes)
 
     for i_z, z in enumerate(z_nodes):
         for i_r, r in enumerate(r_nodes):
-            idx = i_r + N_r * i_z  # radial varies fastest
+            idx = i_r + N_r_mat * i_z  # radial varies fastest
             Ti = T_flat[idx]
 
             # Check axial position first for top/bottom wall
@@ -295,7 +310,8 @@ def dTdt_vol(t, T):
         rho, cp, k = composite_properties(T, total_nodes, z_nodes)
         A, b = build_A_matrix_volume_safe_nonuniform(total_nodes, z_nodes, k)
         return (A.dot(T) + b) / (rho * cp)  # elementwise division
-
+    
+rho_0, cp_0, k_0 = composite_properties(orig_T, total_nodes, z_nodes)
 
 def jac_A_div_rhocp(t, T):
     """
@@ -309,7 +325,6 @@ def jac_A_div_rhocp(t, T):
     return J
 
 def main():
-    rho_0, cp_0, k_0 = composite_properties(orig_T, total_nodes, z_nodes)
 
     # Solve transient heat equation
     sol_t = np.linspace(0, 3000, 3001)
@@ -341,7 +356,7 @@ def main():
     T_water = np.zeros((N_water, N_vert, sol.t.size))
     for i in range(0, index_r + 1):
         for j in range(index_j_b + 1, index_j_t + 1):
-            T_water[i, j - (index_j_b + 1)] = sol.y.reshape(N_r, N_z, -1, order='F')[i, j, :]
+            T_water[i, j - (index_j_b + 1)] = sol.y.reshape(len(total_nodes), len(z_nodes), -1, order='F')[i, j, :]
 
     # Mean temperature
     T_mean = np.mean(T_water, axis=(0, 1))
@@ -349,15 +364,14 @@ def main():
     # Find time when target temperature reached
     target_T = 10 + 273.15
     below = np.where(T_mean < target_T)[0]
-    if len(below):
-        t_target = sol.t[below[0]]
-        print(f"Target reached at t = {t_target:.2f} s, T_mean = {T_mean[below[0]]:.2f} K")
+    t_target = sol.t[below[0]]
+    print(f"Target reached at t = {t_target:.1f} s, T_mean = {T_mean[below[0]]:.4f} K")
 
     # Visualization
     i_center = np.argmin(np.abs(total_nodes))
     j_center = len(z_nodes) // 2
 
-    T_all = sol.y.reshape(N_r, N_z, -1, order='F')
+    T_all = sol.y.reshape(len(total_nodes), len(z_nodes), -1, order='F')
     vmin, vmax = T_all.min(), T_all.max()
 
     R, Z = np.meshgrid(z_nodes, total_nodes)
